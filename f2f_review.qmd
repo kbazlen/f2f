@@ -37,7 +37,6 @@ from scripts.data_process import (
     get_pre_fire_obs_counts,
     get_pre_fire_matchup_counts,
     get_best_site_fire_event,
-    get_site_fire_timeseries,
     get_fires_above_burn_threshold,
     get_fires_above_high_severity_threshold,
     get_sites_with_dual_coverage,
@@ -380,91 +379,6 @@ plot_fire_locations(
 )
 ```
 
-The figure below compares in-situ and Landsat-matched time series at the site-fire event with the most total in-situ observations among the fire events meeting the @tbl-wq-matchup-availability coverage requirement. The Landsat matchup values in harmonized units are plotted in orange along with the in-situ observations in blue.
-
-```{python}
-#| label: fig-toc-tss-timeseries
-#| echo: false
-#| fig-cap: "Three-year pre- and post-fire TOC and TSS time series for the highest-observation qualifying site-fire event with associated Landsat matchups. Blue shows in-situ observations, orange shows Landsat matchup values, and the dashed line marks the fire date. Maps show the monitoring-site locations."
-#| fig-pos: "H"
-fig, axes = plt.subplots(
-    2,
-    2,
-    figsize=(7.5, 5.2),
-    gridspec_kw={"width_ratios": [3, 0.8]},
-)
-parameter_axis_labels = {
-    "toc": "TOC (mg/L)",
-    "tss": "TSS (mg/L)",
-}
-
-for row, parameter in enumerate(["toc", "tss"]):
-    water_quality_path = DATA_DIR / f"water_quality/{parameter}.parquet"
-    matchup_path = matchup_paths[parameter]
-    event = get_best_site_fire_event(
-        catchment_fire_path,
-        site_nhd_path,
-        water_quality_path,
-        matchup_path,
-        x=0.2,
-        min_matchups_per_year=4,
-    )
-    series = get_site_fire_timeseries(
-        water_quality_path,
-        matchup_path,
-        event.site,
-        int(event.fire_year),
-    )
-    series["observation_time"] = pd.to_datetime(series["observation_time"])
-    fire_date = pd.Timestamp(event.fire_date)
-    start_date = fire_date - pd.DateOffset(years=3)
-    end_date = fire_date + pd.DateOffset(years=3)
-
-    time_ax = axes[row, 0]
-    for source, color, label in [
-        ("water_quality", "tab:blue", "In-situ water quality"),
-        ("matchup", "tab:orange", "Landsat matchup"),
-    ]:
-        values = series[series["source"] == source].sort_values("observation_time")
-        time_ax.plot(
-            values["observation_time"],
-            values["harmonized_value"],
-            marker="o",
-            markersize=2,
-            linewidth=0.8,
-            color=color,
-            label=label,
-        )
-    time_ax.axvline(
-        fire_date,
-        color="black",
-        linestyle="--",
-        linewidth=1,
-        label="Fire date",
-    )
-    time_ax.set_xlim(start_date, end_date)
-    time_ax.set_title(
-        f"{parameter.upper()} | {event.fire_name.title()} | {int(event.fire_year)}",
-        fontsize=9,
-    )
-    time_ax.set_xlabel("Date", fontsize=8)
-    time_ax.set_ylabel(parameter_axis_labels[parameter], fontsize=8)
-    time_ax.tick_params(labelsize=7)
-    time_ax.legend(fontsize=7)
-    time_ax.grid(alpha=0.25)
-
-    plot_site_location(
-        event.lat,
-        event.lon,
-        title=f"{parameter.upper()} site",
-        ax=axes[row, 1],
-    )
-    axes[row, 1].tick_params(labelsize=5)
-    axes[row, 1].set_xlabel("")
-    axes[row, 1].set_ylabel("")
-
-fig.tight_layout(pad=0.5)
-```
 
 # Discussion
 

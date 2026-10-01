@@ -765,33 +765,3 @@ def get_best_site_fire_event(
         raise ValueError("No qualifying site-fire event was found")
     return result.iloc[0]
 
-
-def get_site_fire_timeseries(
-    water_quality_path: str,
-    matchup_path: str,
-    site: str,
-    fire_year: int,
-    *,
-    n_years: int = 3,
-) -> pd.DataFrame:
-    """Return water-quality and matchup values around one fire year."""
-    return _run(
-        f"""
-        SELECT 'water_quality' AS source,
-               harmonized_utc AS observation_time,
-               harmonized_value
-        FROM '{water_quality_path}'
-        WHERE MonitoringLocationIdentifier = '{site}'
-          AND EXTRACT(YEAR FROM harmonized_utc)
-              BETWEEN {fire_year - n_years} AND {fire_year + n_years}
-        UNION ALL
-        SELECT 'matchup' AS source,
-               harmonized_utc AS observation_time,
-               harmonized_value
-        FROM '{matchup_path}'
-        WHERE MonitoringLocationIdentifier = '{site}'
-          AND EXTRACT(YEAR FROM harmonized_utc)
-              BETWEEN {fire_year - n_years} AND {fire_year + n_years}
-        ORDER BY observation_time
-        """
-    )
