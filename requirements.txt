@@ -1,0 +1,7 @@
+duckdb
+geopandas
+ipykernel
+jupyter
+matplotlib
+nbclient
+pandas
