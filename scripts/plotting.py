@@ -1,22 +1,29 @@
-
 """Plotting helpers used by the Quarto report."""
-
-from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STATE_SHAPEFILE = (
-    PROJECT_ROOT
-    / "data"
-    / "cb_2018_us_state_500k 2"
-    / "cb_2018_us_state_500k.shp"
-)
+from scripts.configs import STATE_SHAPEFILE
+
 WESTERN_STATES = {
-    "AZ", "CA", "CO", "ID", "KS", "MT", "ND", "NE", "NM",
-    "NV", "OK", "OR", "SD", "TX", "UT", "WA", "WY",
+    "AZ",
+    "CA",
+    "CO",
+    "ID",
+    "KS",
+    "MT",
+    "ND",
+    "NE",
+    "NM",
+    "NV",
+    "OK",
+    "OR",
+    "SD",
+    "TX",
+    "UT",
+    "WA",
+    "WY",
 }
 
 
@@ -151,7 +158,7 @@ def plot_single_pre_fire_obs_distribution(
             ha="right",
             va="top",
             fontsize=8,
-            bbox=dict(boxstyle="round", fc="white", ec="gray", alpha=0.8),
+            bbox={"boxstyle": "round", "fc": "white", "ec": "gray", "alpha": 0.8},
         )
 
     ax.set_title(f"{parameter} pre-fire observations")
@@ -210,7 +217,7 @@ def render_parameter_dropdown_html(
         f'<option value="{param}"{" selected" if param == default_parameter else ""}>{param}</option>'
         for param in encoded_plots
     )
-    return f'''
+    return f"""
 <div style="margin-bottom: 0.75rem;">
   <label for="{select_id}">Parameter:</label>
   <select id="{select_id}">
@@ -237,7 +244,7 @@ def render_parameter_dropdown_html(
   update(select.value);
 }})();
 </script>
-'''
+"""
 
 
 def render_parameter_grid_figure(
@@ -252,7 +259,9 @@ def render_parameter_grid_figure(
     """Static small-multiples grid: the PDF fallback for the HTML dropdown."""
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
     for parameter, ax in zip(values_by_parameter, axes.flat):
-        plot_single_pre_fire_obs_distribution(values_by_parameter[parameter], parameter, ax=ax)
+        plot_single_pre_fire_obs_distribution(
+            values_by_parameter[parameter], parameter, ax=ax
+        )
         ax.set_title(f"{parameter} {title_suffix}")
         ax.set_xlabel(xlabel)
     fig.tight_layout()

@@ -18,8 +18,6 @@ Understanding post-wildfire impacts on water quality requires data from pre- and
 # Burned Catchments and Monitoring-Site Coverage
 ```{python}
 #| include: false
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import pandas as pd
 from IPython.display import display, HTML
@@ -42,7 +40,6 @@ from scripts.data_process import (
     get_sites_with_dual_coverage,
 )
 from scripts.plotting import (
-    PROJECT_ROOT,
     plot_fire_locations,
     plot_site_location,
     plot_single_pre_fire_obs_distribution,
@@ -50,8 +47,15 @@ from scripts.plotting import (
     render_parameter_dropdown_html,
     render_parameter_grid_figure,
 )
-
-DATA_DIR = PROJECT_ROOT.parent / "data" / "f2f_benchmark_v1.0.0-rc2"
+from scripts.configs import (
+    CATCHMENT_FIRE_PATH,
+    CATCHMENT_SEVERITY_PATH,
+    UPSTREAM_FIRE_PATH,
+    UPSTREAM_SEVERITY_PATH,
+    SITE_UPSTREAM_FIRE_PATH,
+    SITE_NHD_PATH,
+    PANEL_PATH,
+)
 ```
 
 To assess the availability of in-situ water quality data across burned basins, we examine the number of catchments affected by wildfire and the presence of monitoring sites within these catchments. In the Fire-to-Faucet Benchmark Dataset, basins are defined as NHDPlusV2 catchments. @tbl-catchment-burn summarizes, for each burned-area threshold, the number of qualifying catchments, the monitoring sites within them, and the count and percentage of catchments with at least one site. Across the western US, 4.56% of NHDPlusV2 catchments in which more than 20% of the area burned during a single fire event between 1984 and 2026 contained at least one monitoring site.
@@ -62,22 +66,18 @@ To assess the availability of in-situ water quality data across burned basins, w
 #| tbl-cap: "Catchment burned-area thresholds: catchments, monitoring sites, and percent of catchments with a site."
 burn_thresholds = [20, 30, 40, 50]
 
-catchment_fire_path = DATA_DIR / "fire/catchment_fire.parquet"
-
-site_nhd_path = DATA_DIR / "sites/site_nhd.parquet"
-
 results = pd.DataFrame({
     "threshold_pct": burn_thresholds,
     "n_catchments": [
-        count_catchments_above_burn_threshold(catchment_fire_path, x=thres / 100)
+        count_catchments_above_burn_threshold(CATCHMENT_FIRE_PATH, x=thres / 100)
         for thres in burn_thresholds
     ],
     "n_sites": [
-        count_sites_above_burn_threshold(catchment_fire_path, site_nhd_path, x=thres / 100)
+        count_sites_above_burn_threshold(CATCHMENT_FIRE_PATH, SITE_NHD_PATH, x=thres / 100)
         for thres in burn_thresholds
     ],
     "n_catchments_with_site": [
-        count_catchments_with_site_above_burn_threshold(catchment_fire_path, site_nhd_path, x=thres / 100)
+        count_catchments_with_site_above_burn_threshold(CATCHMENT_FIRE_PATH, SITE_NHD_PATH, x=thres / 100)
         for thres in burn_thresholds
     ],
 })
@@ -99,27 +99,23 @@ results.style.hide(axis="index").format(
 #| label: tbl-catchment-high-sev
 #| echo: false
 #| tbl-cap: "Catchment high-severity burn thresholds: catchments, monitoring sites, and percent of catchments with a site."
-
-catchment_severity_path = DATA_DIR / "fire/catchment_severity.parquet"
-
-
 results_high_sev = pd.DataFrame({
     "threshold_pct": burn_thresholds,
     "n_catchments": [
         count_catchments_above_high_severity_threshold(
-            catchment_severity_path, catchment_fire_path, x=thres / 100
+            CATCHMENT_SEVERITY_PATH, CATCHMENT_FIRE_PATH, x=thres / 100
         )
         for thres in burn_thresholds
     ],
     "n_sites": [
         count_sites_above_high_severity_threshold(
-            catchment_severity_path, site_nhd_path, catchment_fire_path, x=thres / 100
+            CATCHMENT_SEVERITY_PATH, SITE_NHD_PATH, CATCHMENT_FIRE_PATH, x=thres / 100
         )
         for thres in burn_thresholds
     ],
     "n_catchments_with_site": [
         count_catchments_with_site_above_high_severity_threshold(
-            catchment_severity_path, site_nhd_path, catchment_fire_path, x=thres / 100
+            CATCHMENT_SEVERITY_PATH, SITE_NHD_PATH, CATCHMENT_FIRE_PATH, x=thres / 100
         )
         for thres in burn_thresholds
     ],
@@ -144,10 +140,10 @@ The low percentage of catchments with monitoring sites reflects limited monitori
 #| fig-cap: "Catchments with at least one monitoring site where more than 20% of the catchment burned, with high-severity catchments shown in red and all qualifying catchments shown in blue."
 ## Plot one dot per qualifying catchment with a monitoring site.
 fire_locations = get_fires_above_burn_threshold(
-    catchment_fire_path, site_nhd_path, x=0.2
+    CATCHMENT_FIRE_PATH, SITE_NHD_PATH, x=0.2
 )
 high_severity_locations = get_fires_above_high_severity_threshold(
-    catchment_severity_path, site_nhd_path, catchment_fire_path, x=0.2
+    CATCHMENT_SEVERITY_PATH, SITE_NHD_PATH, CATCHMENT_FIRE_PATH, x=0.2
 )
 
 plot_fire_locations(
@@ -163,18 +159,14 @@ plot_fire_locations(
 #| label: tbl-upstream-burn
 #| echo: false
 #| tbl-cap: "Upstream burned-area thresholds: reaches and monitoring sites."
-upstream_fire_path = DATA_DIR / "fire/upstream_fire_by_comid.parquet"
-site_upstream_fire_path = DATA_DIR / "fire/site_upstream_fire.parquet"
-upstream_severity_path = DATA_DIR / "fire/upstream_severity_by_comid.parquet"
-
 upstream_results = pd.DataFrame({
     "threshold_pct": burn_thresholds,
     "n_catchments": [
-        count_catchments_above_burn_threshold(upstream_fire_path, x=thres / 100, scope="upstream")
+        count_catchments_above_burn_threshold(UPSTREAM_FIRE_PATH, x=thres / 100, scope="upstream")
         for thres in burn_thresholds
     ],
     "n_sites": [
-        count_sites_above_burn_threshold(site_upstream_fire_path, x=thres / 100, scope="upstream")
+        count_sites_above_burn_threshold(SITE_UPSTREAM_FIRE_PATH, x=thres / 100, scope="upstream")
         for thres in burn_thresholds
     ],
 })
@@ -193,13 +185,13 @@ upstream_results_high_sev = pd.DataFrame({
     "threshold_pct": burn_thresholds,
     "n_catchments": [
         count_catchments_above_high_severity_threshold(
-            upstream_severity_path, x=thres / 100, scope="upstream"
+            UPSTREAM_SEVERITY_PATH, x=thres / 100, scope="upstream"
         )
         for thres in burn_thresholds
     ],
     "n_sites": [
         count_sites_above_high_severity_threshold(
-            upstream_severity_path, fire_path=site_upstream_fire_path, x=thres / 100, scope="upstream"
+            UPSTREAM_SEVERITY_PATH, fire_path=SITE_UPSTREAM_FIRE_PATH, x=thres / 100, scope="upstream"
         )
         for thres in burn_thresholds
     ],
@@ -218,10 +210,8 @@ upstream_results_high_sev.style.hide(axis="index").format(
 #| label: tbl-wq-availability
 #| echo: false
 #| tbl-cap: "Qualifying fire events with >=4 observations/year for 3 years pre and post fire, by parameter and burned-area threshold."
-panel_path = DATA_DIR / "panel/site_year_panel.parquet"
-
 wq_availability = build_wq_availability_table(
-    catchment_fire_path, site_nhd_path, panel_path, burn_thresholds
+    CATCHMENT_FIRE_PATH, SITE_NHD_PATH, PANEL_PATH, burn_thresholds
 )
 
 wq_availability.style.hide(axis="index")
@@ -235,7 +225,7 @@ The figure below shows, for each parameter, the distribution across site-fire ev
 #| fig-cap: "Distribution of pre-fire observation counts (3 years before a fire burning >20% of the catchment), by parameter. Select a parameter in the dropdown to view its histogram."
 pre_fire_counts = {
     parameter: get_pre_fire_obs_counts(
-        catchment_fire_path, site_nhd_path, panel_path, parameter, x=0.2
+        CATCHMENT_FIRE_PATH, SITE_NHD_PATH, PANEL_PATH, parameter, x=0.2
     )["pre_fire_obs"]
     for parameter in WQ_PARAMETERS
 }
@@ -267,21 +257,13 @@ The grid above shows the same per-parameter pre-fire observation-count histogram
 @tbl-wq-matchup-availability evaluates the temporal availability of Landsat matchups before and after fire events. A matchup row pairs one in-situ observation with one Landsat scene, so a single observation can contribute multiple rows. For each burned-area threshold and parameter, the table counts qualifying fire events with at least four matchup rows per year in each of the three years before and after the fire. Counts are calculated from the `n_match_<parameter>` columns in `panel/site_year_panel.parquet`, the same site-year table used for @tbl-wq-availability. As in that table, a site with multiple qualifying fires is counted once per fire, not once overall.
 
 ```{python}
-#| include: false
-matchup_paths = {
-    parameter: DATA_DIR / f"matchups/{parameter}_siteSR_dswe1.parquet"
-    for parameter in WQ_PARAMETERS
-}
-```
-
-```{python}
 #| label: tbl-wq-matchup-availability
 #| echo: false
 #| tbl-cap: "Qualifying fire events with >=4 Landsat matchup rows per year for 3 years pre and post fire, by parameter and burned-area threshold."
 matchup_availability = build_matchup_availability_table(
-    catchment_fire_path,
-    site_nhd_path,
-    panel_path,
+    CATCHMENT_FIRE_PATH,
+    SITE_NHD_PATH,
+    PANEL_PATH,
     burn_thresholds,
 )
 
@@ -298,9 +280,9 @@ The figure below shows, for each parameter, the distribution across qualifying s
 #| fig-cap: "Distribution of pre-fire Landsat-in-situ matchup rows in the three years before a fire burning >20% of the catchment, by parameter. Select a parameter in the dropdown to view its histogram."
 pre_fire_matchup_counts = {
     parameter: get_pre_fire_matchup_counts(
-        catchment_fire_path,
-        site_nhd_path,
-        panel_path,
+        CATCHMENT_FIRE_PATH,
+        SITE_NHD_PATH,
+        PANEL_PATH,
         parameter,
         x=0.2,
     )["pre_fire_matchups"]
@@ -347,9 +329,9 @@ The grid above shows the same per-parameter pre-fire Landsat matchup histograms 
 #| echo: false
 #| tbl-cap: "Number of Landsat-in-situ matchup rows at monitoring sites in catchments above each burned-area threshold."
 matchup_counts = build_matchup_count_table(
-    catchment_fire_path,
-    site_nhd_path,
-    panel_path,
+    CATCHMENT_FIRE_PATH,
+    SITE_NHD_PATH,
+    PANEL_PATH,
     burn_thresholds,
 )
 
@@ -366,9 +348,9 @@ matchup_counts.style.hide(axis="index").format(
 #| fig-cap: "Sites in catchments burned more than 20% with both quarterly in-situ observations and quarterly Landsat matchups for at least one parameter, in each of the three years before and after the fire."
 #| fig-pos: "H"
 dual_coverage_sites = get_sites_with_dual_coverage(
-    catchment_fire_path,
-    site_nhd_path,
-    panel_path,
+    CATCHMENT_FIRE_PATH,
+    SITE_NHD_PATH,
+    PANEL_PATH,
     x=0.2,
 )
 

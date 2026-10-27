@@ -3,7 +3,6 @@
 import duckdb
 import pandas as pd
 
-
 WQ_PARAMETERS = [
     "chla",
     "cdom",
@@ -16,6 +15,9 @@ WQ_PARAMETERS = [
     "spcond",
     "alkalinity",
 ]
+
+# MTBS incident types for `incid_types` filters.
+PRESCRIBED_FIRE = ["Prescribed Fire"]
 
 
 def _run(query: str) -> pd.DataFrame:
@@ -40,15 +42,46 @@ def _validate_parameter(parameter: str) -> str:
     return f"n_obs_{parameter}"
 
 
+def _catchment_fire_source(path: str, incid_types: list[str] | None = None) -> str:
+    """Return the catchment fire table, optionally filtered to MTBS incident types."""
+    if incid_types is None:
+        return f"'{path}'"
+    types = ", ".join(f"'{t}'" for t in incid_types)
+    return f"(SELECT * FROM '{path}' WHERE incid_type IN ({types}))"
+
+
+def _check_incid_types_scope(scope: str, incid_types: list[str] | None) -> None:
+    # Upstream tables sum all fires per (comid, year), so they can't be split by type.
+    if incid_types is not None and scope != "catchment":
+        raise ValueError('incid_types can only be used with scope="catchment"')
+
+
+def count_fires_by_type(fire_path: str) -> pd.DataFrame:
+    """Count distinct fire events and burned catchments by MTBS incident type."""
+    return _run(f"""
+        SELECT incid_type,
+               COUNT(DISTINCT event_id) AS n_fires,
+               COUNT(DISTINCT comid) AS n_catchments
+        FROM '{fire_path}'
+        GROUP BY incid_type
+        ORDER BY n_fires DESC
+        """)
+
+
 def count_catchments_above_burn_threshold(
-    fire_path: str, *, x: float = 0.5, scope: str = "catchment"
+    fire_path: str,
+    *,
+    x: float = 0.5,
+    scope: str = "catchment",
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count distinct catchments above a local or upstream burn threshold."""
     fraction = _burn_fraction_column(scope)
+    _check_incid_types_scope(scope, incid_types)
     return _count(
         f"""
         SELECT COUNT(DISTINCT comid) AS n_catchments
-        FROM '{fire_path}'
+        FROM {_catchment_fire_source(fire_path, incid_types)}
         WHERE {fraction} > {x}
         """,
         "n_catchments",
@@ -56,13 +89,17 @@ def count_catchments_above_burn_threshold(
 
 
 def count_catchments_with_site_above_burn_threshold(
-    fire_path: str, site_nhd_path: str, *, x: float = 0.5
+    fire_path: str,
+    site_nhd_path: str,
+    *,
+    x: float = 0.5,
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count burned catchments containing at least one monitoring site."""
     return _count(
         f"""
         SELECT COUNT(DISTINCT cf.comid) AS n_catchments
-        FROM '{fire_path}' cf
+        FROM {_catchment_fire_source(fire_path, incid_types)} cf
         JOIN '{site_nhd_path}' s
           ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
         WHERE cf.burned_frac > {x}
@@ -77,14 +114,16 @@ def count_sites_above_burn_threshold(
     *,
     x: float = 0.5,
     scope: str = "catchment",
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count distinct sites above a local or upstream burn threshold."""
+    _check_incid_types_scope(scope, incid_types)
     if scope == "catchment":
         if site_nhd_path is None:
             raise ValueError('site_nhd_path is required for scope="catchment"')
         query = f"""
             SELECT COUNT(DISTINCT s.MonitoringLocationIdentifier) AS n_sites
-            FROM '{fire_path}' cf
+            FROM {_catchment_fire_source(fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -106,14 +145,20 @@ def count_catchments_above_high_severity_threshold(
     *,
     x: float = 0.5,
     scope: str = "catchment",
+    incid_types: list[str] | None = None,
 ) -> int:
-    """Count catchments above a local or upstream high-severity threshold."""
+    """Count catchments above a local or upstream high-severity threshold.
+
+    With `incid_types`, only catchment-years burned by those fire types
+    qualify, but severity area still includes every fire in that catchment-year.
+    """
+    _check_incid_types_scope(scope, incid_types)
     if scope == "catchment":
         if fire_path is None:
             raise ValueError('fire_path is required for scope="catchment"')
         query = f"""
             SELECT COUNT(DISTINCT cf.comid) AS n_catchments
-            FROM '{fire_path}' cf
+            FROM {_catchment_fire_source(fire_path, incid_types)} cf
             JOIN '{severity_path}' cs
               ON cf.comid = cs.comid AND cf.ig_year = cs.year
             WHERE cs.sev4_sqkm / cf.catch_sqkm > {x}
@@ -135,12 +180,13 @@ def count_catchments_with_site_above_high_severity_threshold(
     fire_path: str,
     *,
     x: float = 0.5,
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count high-severity-burned catchments containing a monitoring site."""
     return _count(
         f"""
         SELECT COUNT(DISTINCT cf.comid) AS n_catchments
-        FROM '{fire_path}' cf
+        FROM {_catchment_fire_source(fire_path, incid_types)} cf
         JOIN '{severity_path}' cs
           ON cf.comid = cs.comid AND cf.ig_year = cs.year
         JOIN '{site_nhd_path}' s
@@ -158,16 +204,18 @@ def count_sites_above_high_severity_threshold(
     *,
     x: float = 0.5,
     scope: str = "catchment",
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count distinct sites above a local or upstream high-severity threshold."""
     if fire_path is None:
         raise ValueError("fire_path is required")
+    _check_incid_types_scope(scope, incid_types)
     if scope == "catchment":
         if site_nhd_path is None:
             raise ValueError('site_nhd_path is required for scope="catchment"')
         query = f"""
             SELECT COUNT(DISTINCT s.MonitoringLocationIdentifier) AS n_sites
-            FROM '{fire_path}' cf
+            FROM {_catchment_fire_source(fire_path, incid_types)} cf
             JOIN '{severity_path}' cs
               ON cf.comid = cs.comid AND cf.ig_year = cs.year
             JOIN '{site_nhd_path}' s
@@ -193,13 +241,15 @@ def get_fires_above_burn_threshold(
     *,
     x: float = 0.5,
     scope: str = "catchment",
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Return qualifying fire locations for mapping."""
+    _check_incid_types_scope(scope, incid_types)
     if scope == "catchment":
         query = f"""
                         SELECT cf.comid, MAX(cf.burned_frac) AS burned_frac,
                    AVG(s.lat) AS lat, AVG(s.lon) AS lon
-            FROM '{fire_path}' cf
+            FROM {_catchment_fire_source(fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -226,16 +276,18 @@ def get_fires_above_high_severity_threshold(
     *,
     x: float = 0.5,
     scope: str = "catchment",
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Return qualifying high-severity fire locations for mapping."""
     if fire_path is None:
         raise ValueError("fire_path is required")
+    _check_incid_types_scope(scope, incid_types)
     if scope == "catchment":
         query = f"""
                  SELECT cf.comid,
                      MAX(cs.sev4_sqkm / cf.catch_sqkm) AS high_sev_frac,
                    AVG(s.lat) AS lat, AVG(s.lon) AS lon
-            FROM '{fire_path}' cf
+            FROM {_catchment_fire_source(fire_path, incid_types)} cf
             JOIN '{severity_path}' cs
               ON cf.comid = cs.comid AND cf.ig_year = cs.year
             JOIN '{site_nhd_path}' s
@@ -262,7 +314,11 @@ def get_fires_above_high_severity_threshold(
 
 
 def count_fire_events_above_burn_threshold(
-    fire_path: str, site_nhd_path: str, *, x: float = 0.5
+    fire_path: str,
+    site_nhd_path: str,
+    *,
+    x: float = 0.5,
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count qualifying (site, fire event) pairs above a burn threshold.
 
@@ -274,7 +330,7 @@ def count_fire_events_above_burn_threshold(
         SELECT COUNT(*) AS n_events
         FROM (
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site, cf.event_id AS event_id
-            FROM '{fire_path}' cf
+            FROM {_catchment_fire_source(fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -293,6 +349,7 @@ def count_fire_events_with_quarterly_wq_above_burn_threshold(
     x: float = 0.5,
     n_years: int = 3,
     min_obs: int = 4,
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count qualifying fire events meeting annual observation minimums before and after.
 
@@ -307,7 +364,7 @@ def count_fire_events_with_quarterly_wq_above_burn_threshold(
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site,
                             cf.event_id AS event_id,
                             cf.ig_year AS fire_year
-            FROM '{catchment_fire_path}' cf
+            FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -342,6 +399,7 @@ def build_wq_availability_table(
     *,
     n_years: int = 3,
     min_obs: int = 4,
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build qualifying fire-event counts by burn threshold and parameter.
 
@@ -353,7 +411,10 @@ def build_wq_availability_table(
         row = {
             "threshold_pct": threshold,
             "n_events": count_fire_events_above_burn_threshold(
-                catchment_fire_path, site_nhd_path, x=threshold / 100
+                catchment_fire_path,
+                site_nhd_path,
+                x=threshold / 100,
+                incid_types=incid_types,
             ),
         }
         row.update(
@@ -366,6 +427,7 @@ def build_wq_availability_table(
                     x=threshold / 100,
                     n_years=n_years,
                     min_obs=min_obs,
+                    incid_types=incid_types,
                 )
                 for parameter in parameters
             }
@@ -381,6 +443,7 @@ def count_matchups_above_burn_threshold(
     parameter: str,
     *,
     x: float = 0.5,
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count matchup rows at sites in catchments above a burn threshold.
 
@@ -393,7 +456,7 @@ def count_matchups_above_burn_threshold(
         f"""
         WITH eligible_sites AS (
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site
-            FROM '{catchment_fire_path}' cf
+            FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -413,6 +476,8 @@ def build_matchup_count_table(
     panel_path: str,
     thresholds_pct: list[int],
     parameters: list[str] = WQ_PARAMETERS,
+    *,
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build matchup-row counts by burn threshold and parameter."""
     rows = []
@@ -426,6 +491,7 @@ def build_matchup_count_table(
                     panel_path,
                     parameter,
                     x=threshold / 100,
+                    incid_types=incid_types,
                 )
                 for parameter in parameters
             }
@@ -443,6 +509,7 @@ def count_fire_events_with_quarterly_matchups_above_burn_threshold(
     x: float = 0.5,
     n_years: int = 3,
     min_matchups: int = 4,
+    incid_types: list[str] | None = None,
 ) -> int:
     """Count qualifying fire events with annual matchup minimums before and after.
 
@@ -461,7 +528,7 @@ def count_fire_events_with_quarterly_matchups_above_burn_threshold(
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site,
                             cf.event_id AS event_id,
                             cf.ig_year AS fire_year
-            FROM '{catchment_fire_path}' cf
+            FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -496,6 +563,7 @@ def build_matchup_availability_table(
     *,
     n_years: int = 3,
     min_matchups: int = 4,
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build qualifying fire-event counts meeting annual matchup minimums by burn threshold."""
     rows = []
@@ -511,6 +579,7 @@ def build_matchup_availability_table(
                     x=threshold / 100,
                     n_years=n_years,
                     min_matchups=min_matchups,
+                    incid_types=incid_types,
                 )
                 for parameter in parameters
             }
@@ -529,6 +598,7 @@ def get_sites_with_dual_coverage(
     n_years: int = 3,
     min_obs: int = 4,
     min_matchups: int = 4,
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Sites with both quarterly in-situ and quarterly matchup coverage.
 
@@ -543,13 +613,12 @@ def get_sites_with_dual_coverage(
     for parameter in parameters:
         n_obs_col = _validate_parameter(parameter)
         n_match_col = f"n_match_{parameter}"
-        df = _run(
-            f"""
+        df = _run(f"""
             WITH eligible_fires AS (
                 SELECT DISTINCT s.MonitoringLocationIdentifier AS site,
                                 cf.ig_year AS fire_year,
                                 s.lat, s.lon
-                FROM '{catchment_fire_path}' cf
+                FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
                 JOIN '{site_nhd_path}' s
                   ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
                 WHERE cf.burned_frac > {x}
@@ -580,10 +649,13 @@ def get_sites_with_dual_coverage(
                   AND p.yr BETWEEN ef.fire_year + 1 AND ef.fire_year + {n_years}
                   AND p.{n_match_col} >= {min_matchups}
             ) = {n_years}
-            """
-        )
+            """)
         frames.append(df)
-    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["site", "lat", "lon"])
+    combined = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["site", "lat", "lon"])
+    )
     return combined.drop_duplicates(subset="site").reset_index(drop=True)
 
 
@@ -595,15 +667,15 @@ def get_pre_fire_obs_counts(
     *,
     x: float = 0.5,
     n_years: int = 3,
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Return pre-fire observation totals for each qualifying site-fire event."""
     n_obs = _validate_parameter(parameter)
-    return _run(
-        f"""
+    return _run(f"""
         WITH eligible_fires AS (
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site,
                             cf.ig_year AS fire_year
-            FROM '{catchment_fire_path}' cf
+            FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -615,8 +687,7 @@ def get_pre_fire_obs_counts(
           ON p.site = ef.site
          AND p.yr BETWEEN ef.fire_year - {n_years} AND ef.fire_year - 1
         GROUP BY ef.site, ef.fire_year
-        """
-    )
+        """)
 
 
 def get_pre_fire_matchup_counts(
@@ -627,6 +698,7 @@ def get_pre_fire_matchup_counts(
     *,
     x: float = 0.5,
     n_years: int = 3,
+    incid_types: list[str] | None = None,
 ) -> pd.DataFrame:
     """Return pre-fire matchup totals for each qualifying site-fire event.
 
@@ -635,12 +707,11 @@ def get_pre_fire_matchup_counts(
     """
     _validate_parameter(parameter)
     n_match = f"n_match_{parameter}"
-    return _run(
-        f"""
+    return _run(f"""
         WITH eligible_fires AS (
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site,
                             cf.ig_year AS fire_year
-            FROM '{catchment_fire_path}' cf
+            FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -652,8 +723,7 @@ def get_pre_fire_matchup_counts(
           ON p.site = ef.site
          AND p.yr BETWEEN ef.fire_year - {n_years} AND ef.fire_year - 1
         GROUP BY ef.site, ef.fire_year
-        """
-    )
+        """)
 
 
 def get_best_site_fire_event(
@@ -665,6 +735,7 @@ def get_best_site_fire_event(
     x: float = 0.2,
     n_years: int = 3,
     min_matchups_per_year: int | None = None,
+    incid_types: list[str] | None = None,
 ) -> pd.Series:
     """Select the qualifying site-fire event with the most observations."""
     coverage_filter = ""
@@ -708,8 +779,7 @@ def get_best_site_fire_event(
               AND am.n_matchups >= {min_matchups_per_year}
         ) = {n_years}
         """
-    result = _run(
-        f"""
+    result = _run(f"""
         WITH eligible_fires AS (
             SELECT DISTINCT s.MonitoringLocationIdentifier AS site,
                             cf.comid,
@@ -719,7 +789,7 @@ def get_best_site_fire_event(
                             TRY_CAST(cf.ig_date AS DATE) AS fire_date,
                             s.lat,
                             s.lon
-            FROM '{catchment_fire_path}' cf
+            FROM {_catchment_fire_source(catchment_fire_path, incid_types)} cf
             JOIN '{site_nhd_path}' s
               ON cf.comid = TRY_CAST(s.fl_nhd_id AS BIGINT)
             WHERE cf.burned_frac > {x}
@@ -759,9 +829,7 @@ def get_best_site_fire_event(
                 {coverage_filter}
                 ORDER BY n_observations DESC, ef.fire_year DESC, ef.site
         LIMIT 1
-        """
-    )
+        """)
     if result.empty:
         raise ValueError("No qualifying site-fire event was found")
     return result.iloc[0]
-
